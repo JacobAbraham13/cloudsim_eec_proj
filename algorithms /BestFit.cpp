@@ -139,8 +139,13 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
         unsigned available_memory = m_info.memory_size - m_info.memory_used;
         if (available_memory < task_info.required_memory + VM_MEMORY_OVERHEAD) continue;
 
-        best_vm = vm; 
-        break; 
+        unsigned leftover = available_memory - (task_info.required_memory + VM_MEMORY_OVERHEAD);
+
+        // Favor less loaded VMs as well
+        if (leftover < best_fit_mem && vm_info.active_tasks.size() < 5) {
+            best_vm = vm;
+            best_fit_mem = leftover;
+        }
     }
 
     if (best_vm != VMId_t(-1)) {
