@@ -12,6 +12,7 @@
 
 static bool migrating = false;
 static unsigned active_machines = 16;
+static unsigned round_robin_pointer = 0;
 
 
 Priority_t determinePriority(SLAType_t sla) {
@@ -45,6 +46,7 @@ void Scheduler::Init() {
    SimOutput("Scheduler::Init(): Total number of machines is " + to_string(total_machines), 3);
    SimOutput("Scheduler::Init(): Initializing scheduler", 1);
 
+
    for (unsigned i = 0; i < total_machines; i++) {
        machines.push_back(i);
        powered_on.insert(i); // Track that machine is on
@@ -57,7 +59,7 @@ void Scheduler::Init() {
        vm_to_machine[vm] = i;
    }
 
-   SimOutput("Scheduler::Init(): Initialized " + to_string(active_machines) + " X86 machines with VMs.", 3);
+    SimOutput("Scheduler::Init(): Initialized " + to_string(active_machines) + " X86 machines with VMs.", 3);
 
 }
 
@@ -69,71 +71,58 @@ void Scheduler::MigrationComplete(Time_t time, VMId_t vm_id) {
 
 void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
    TaskInfo_t task_info = GetTaskInfo(task_id);
-   VMId_t best_vm = -1;
-   int min_tasks = UINT_MAX;
 
-   // Step 1: Check the VM's on active machines
-   for (VMId_t vm : vms) {
-      VMInfo_t vm_info = VM_GetInfo(vm);
-      MachineId_t machine_id = vm_info.machine_id;
-      MachineInfo_t m_info = Machine_GetInfo(machine_id);
+   for(int i = 0; i < Machine_GetTotal(); i++) {
+      size_t index = (round_robin_pointer + i) % Machine_GetTotal(); //resets the index when it hits the max 
+      MachineId_t machine_id = MachineId_t(index);
+      MachineInfo_t machine_info = Machine_GetInfo(machine_id);
 
-      if (m_info.s_state != S0) continue; // checks if machine is active
-      if (m_info.cpu != task_info.required_cpu || vm_info.vm_type != task_info.required_vm) continue;
-
-      unsigned available_memory = m_info.memory_size - m_info.memory_used;
-      if (available_memory < task_info.required_memory + VM_MEMORY_OVERHEAD) continue;
-
-      if (vm_info.active_tasks.size() < min_tasks) {
-         best_vm = vm;
-         min_tasks = vm_info.active_tasks.size();
-      }
-   }
-
-   if (best_vm != VMId_t(-1)) {
-       VM_AddTask(best_vm, task_id, task_info.priority);
-       SimOutput("NewTask(): Assigned to existing VM " + to_string(best_vm), 2);
-       return;
-   }
-
-
-   // Step 2: Create a new VM on an active machine
-   for (unsigned i = 0; i < machines.size(); i++) {
-      MachineId_t machine_id = machines[i];
-      MachineInfo_t m_info = Machine_GetInfo(machine_id);
-
-      if (m_info.s_state != S0 || m_info.cpu != task_info.required_cpu) continue;
-      unsigned available_memory = m_info.memory_size - m_info.memory_used;
-      if (available_memory < task_info.required_memory + VM_MEMORY_OVERHEAD) continue;
-
-      // Create VM and defer task assignment 
+      if (machine_info.s_state != S0 || machine_info.cpu != task_info.required_cpu) continue;
+      unsigned available_memory = machine_info.memory_size - machine_info.memory_used;
+      if (available_memory < task_info.required_memory) continue;
       
+      VMId_t foundVM;
+      bool found_a_vm = false; 
+      for(VMId_t vm_id : vms) {
+         VMInfo_t vm_info = VM_GetInfo(vm_id); 
+         if (vm_info.machine_id == machine_id && vm_info.vm_type == task_info.required_vm) {
+            foundVM = vm_id; 
+            found_a_vm = true;
+         }
+      }
+      // Create a new VM
+      if(!found_a_vm) {
+         foundVM = VM_Create(task_info.required_vm, task_info.required_cpu);
+         VM_Attach(foundVM, machine_id);
+         vms.push_back(foundVM);
+      }
+
+      VM_AddTask(foundVM, task_id, task_info.priority);
+      round_robin_pointer = (index + 1) % Machine_GetTotal();
+      return; 
+   }
+
+   // We need to activate a machine
+   for(int i = 0; i < Machine_GetTotal(); i++) {
+      size_t index = (round_robin_pointer + i) % Machine_GetTotal(); //resets the index when it hits the max 
+      MachineId_t machine_id = MachineId_t(index);
+      MachineInfo_t machine_info = Machine_GetInfo(machine_id);
+
+      if (machine_info.s_state != S5 || machine_info.cpu != task_info.required_cpu) continue;
+      
+      unsigned available_memory = machine_info.memory_size - machine_info.memory_used;
+      if (available_memory < task_info.required_memory + VM_MEMORY_OVERHEAD) continue;
+
+      Machine_SetState(machine_id, S0);
       VMId_t new_vm = VM_Create(task_info.required_vm, task_info.required_cpu);
       VM_Attach(new_vm, machine_id);
       VM_AddTask(new_vm, task_id, task_info.priority);
+
       vms.push_back(new_vm);
-  
-      SimOutput("NewTask(): Created VM " + to_string(new_vm) + " on machine " + to_string(machine_id) + " — task deferred", 2);
+      
+      round_robin_pointer = (index + 1) % Machine_GetTotal();
       return;
-   }
 
-   // Step 3: Activate a new machine and create a new VM
-   for (unsigned i = 0; i < Machine_GetTotal(); i++) {
-      MachineId_t machine = MachineId_t(i);
-      MachineInfo_t m_info = Machine_GetInfo(machine);
-      if (m_info.s_state == S5 && m_info.cpu == task_info.required_cpu) {
-         Machine_SetState(machine, S0);
-         VMId_t new_vm = VM_Create(task_info.required_vm, task_info.required_cpu);
-         SimOutput("went wrong at this attach", 3);
-         VM_Attach(new_vm, machine);
-         VM_AddTask(new_vm, task_id, task_info.priority);
-
-         vms.push_back(new_vm);
-         machines.push_back(machine);
-
-         SimOutput("NewTask(): Powered on sleeping machine " + to_string(machine) + " for task " + to_string(task_id), 2);
-         return;
-      }
    }
 
    SimOutput("NewTask(): No placement found for task " + to_string(task_id), 1);
@@ -176,9 +165,11 @@ void Scheduler::TaskComplete(Time_t now, TaskId_t task_id) {
    // Do any bookkeeping necessary for the data structures
    // Decide if a machine is to be turned off, slowed down, or VMs to be migrated according to your policy
    // This is an opportunity to make any adjustments to optimize performance/energy
-  
+
    SimOutput("Scheduler::TaskComplete(): Task " + to_string(task_id) + " is complete at " + to_string(now), 4);
 }
+
+
 
 
 // Public interface below
