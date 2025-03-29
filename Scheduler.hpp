@@ -39,11 +39,26 @@ public:
 private:
    vector<VMId_t> vms;
    vector<MachineId_t> machines;
+
+
+   //needed AI to see how to declare a priority queue in C++ 
+   std::priority_queue<
+    MachineId_t,                      // Type stored in queue
+    std::vector<MachineId_t>,         // Underlying container
+    CompareMachineEnergy              // Comparator
+   > machineQueue; 
+
+   vector<VMId_t> pending_vms; 
+   
+
+
+   //needed AI to see how to declare a hashmap in C++ 
    std::unordered_map<VMId_t, MachineId_t> vm_to_machine;
-   std::unordered_map<MachineId_t, std::vector<VMId_t>> machine_to_vms;
+   std::unordered_map<MachineId_t, std::vector<VMId_t>> machinesToVMs;
    std::unordered_map<TaskId_t, VMId_t> task_to_vm;
    std::set<MachineId_t> powered_on;
    VMType_t GetDefaultVMForCPU(CPUType_t cpu_type);
+   
 
 };
 

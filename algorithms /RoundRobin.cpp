@@ -42,41 +42,24 @@ VMType_t Scheduler::GetDefaultVMForCPU(CPUType_t cpu_type) {
 
 
 void Scheduler::Init() {
-   // Find the parameters of the clusters
-   // Get the total number of machines
-   // For each machine:
-   //      Get the type of the machine
-   //      Get the memory of the machine
-   //      Get the number of CPUs
-   //      Get if there is a GPU or not
-   //
    unsigned total_machines = Machine_GetTotal();
    SimOutput("Scheduler::Init(): Total number of machines is " + to_string(total_machines), 3);
    SimOutput("Scheduler::Init(): Initializing scheduler", 1);
 
 
-   for (unsigned i = 0; i < active_machines && i < total_machines; i++) {
+   for (unsigned i = 0; i < total_machines; i++) {
        machines.push_back(i);
        powered_on.insert(i); // Track that machine is on
-
-
-       VMId_t vm = VM_Create(LINUX, X86);
+       MachineInfo_t machine_info = Machine_GetInfo(i); 
+       VMId_t vm = VM_Create(GetDefaultVMForCPU(machine_info.cpu), machine_info.cpu);
        VM_Attach(vm, i);
 
 
        vms.push_back(vm);
        vm_to_machine[vm] = i;
-       machine_to_vms[i].push_back(vm);
    }
 
-
-   // Turn off ARM machines (assumed to be machines 24 and up)
-   for (unsigned i = 24; i < total_machines; i++) {
-       Machine_SetState(i, S5);
-   }
-
-
-   SimOutput("Scheduler::Init(): Initialized " + to_string(active_machines) + " X86 machines with VMs.", 3);
+    SimOutput("Scheduler::Init(): Initialized " + to_string(active_machines) + " X86 machines with VMs.", 3);
 
 }
 
@@ -96,22 +79,23 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
 
       if (machine_info.s_state != S0 || machine_info.cpu != task_info.required_cpu) continue;
       unsigned available_memory = machine_info.memory_size - machine_info.memory_used;
-      if (available_memory < task_info.required_memory + VM_MEMORY_OVERHEAD) continue;
+      if (available_memory < task_info.required_memory) continue;
       
       VMId_t foundVM;
+      bool found_a_vm = false; 
       for(VMId_t vm_id : vms) {
          VMInfo_t vm_info = VM_GetInfo(vm_id); 
          if (vm_info.machine_id == machine_id && vm_info.vm_type == task_info.required_vm) {
             foundVM = vm_id; 
+            found_a_vm = true;
          }
       }
       // Create a new VM
-      if(foundVM == NULL) {
+      if(!found_a_vm) {
          foundVM = VM_Create(task_info.required_vm, task_info.required_cpu);
          VM_Attach(foundVM, machine_id);
          vms.push_back(foundVM);
       }
-
 
       VM_AddTask(foundVM, task_id, task_info.priority);
       round_robin_pointer = (index + 1) % Machine_GetTotal();
@@ -154,7 +138,6 @@ void Scheduler::PeriodicCheck(Time_t now) {
        MachineInfo_t machine_info = Machine_GetInfo(machine);
        if (machine_info.active_tasks == 0 && machine_info.active_vms == 0 && machine_info.s_state == S0) {
            Machine_SetState(machine, S5);
-         //   powered_on.erase(machine);
        }
    }
 }
@@ -182,16 +165,7 @@ void Scheduler::TaskComplete(Time_t now, TaskId_t task_id) {
    // Do any bookkeeping necessary for the data structures
    // Decide if a machine is to be turned off, slowed down, or VMs to be migrated according to your policy
    // This is an opportunity to make any adjustments to optimize performance/energy
-   // VMId_t vm = task_to_vm[task_id];
-   // MachineId_t machine = vm_to_machine[vm];
-   // MachineInfo_t machine_info = Machine_GetInfo(machine);
 
-
-   // if (machine_info.active_tasks == 0 && machine_info.active_vms == 0 && machine_info.s_state == S0) {
-   //     VM_Shutdown(vm);
-   //     Machine_SetState(machine, S5);
-   //     powered_on.erase(machine);
-   // }
    SimOutput("Scheduler::TaskComplete(): Task " + to_string(task_id) + " is complete at " + to_string(now), 4);
 }
 
