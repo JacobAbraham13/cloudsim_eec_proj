@@ -41,9 +41,11 @@ VMType_t Scheduler::GetDefaultVMForCPU(CPUType_t cpu_type) {
 
 
 void Scheduler::Init() {
+  
    unsigned total_machines = Machine_GetTotal();
    SimOutput("Scheduler::Init(): Total number of machines is " + to_string(total_machines), 3);
    SimOutput("Scheduler::Init(): Initializing scheduler", 1);
+
 
    for (unsigned i = 0; i < total_machines; i++) {
        machines.push_back(i);
@@ -57,6 +59,10 @@ void Scheduler::Init() {
        vm_to_machine[vm] = i;
    }
 
+
+   SimOutput("Scheduler::Init(): Initialized " + to_string(active_machines) + " X86 machines with VMs.", 3);
+
+
    SimOutput("Scheduler::Init(): Initialized " + to_string(active_machines) + " X86 machines with VMs.", 3);
 
 }
@@ -69,74 +75,79 @@ void Scheduler::MigrationComplete(Time_t time, VMId_t vm_id) {
 
 void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
    TaskInfo_t task_info = GetTaskInfo(task_id);
-   VMId_t best_vm = -1;
-   int min_tasks = UINT_MAX;
+    Priority_t priority = determinePriority(task_info.required_sla);
 
-   // Step 1: Check the VM's on active machines
-   for (VMId_t vm : vms) {
-      VMInfo_t vm_info = VM_GetInfo(vm);
-      MachineId_t machine_id = vm_info.machine_id;
-      MachineInfo_t m_info = Machine_GetInfo(machine_id);
+    VMId_t best_vm = -1;
+    unsigned best_fit_mem = UINT_MAX;
 
-      if (m_info.s_state != S0) continue; // checks if machine is active
-      if (m_info.cpu != task_info.required_cpu || vm_info.vm_type != task_info.required_vm) continue;
+    for (VMId_t vm : vms) {
+        VMInfo_t vm_info = VM_GetInfo(vm);
+        MachineId_t machine_id = vm_info.machine_id;
+        MachineInfo_t m_info = Machine_GetInfo(machine_id);
 
-      unsigned available_memory = m_info.memory_size - m_info.memory_used;
-      if (available_memory < task_info.required_memory + VM_MEMORY_OVERHEAD) continue;
+        if (m_info.s_state != S0) continue;
+        if (m_info.cpu != task_info.required_cpu || vm_info.vm_type != task_info.required_vm) continue;
 
-      if (vm_info.active_tasks.size() < min_tasks) {
-         best_vm = vm;
-         min_tasks = vm_info.active_tasks.size();
-      }
-   }
+        unsigned available_memory = m_info.memory_size - m_info.memory_used;
+        if (available_memory < task_info.required_memory + VM_MEMORY_OVERHEAD) continue;
 
-   if (best_vm != VMId_t(-1)) {
-       VM_AddTask(best_vm, task_id, task_info.priority);
-       SimOutput("NewTask(): Assigned to existing VM " + to_string(best_vm), 2);
-       return;
-   }
+        unsigned leftover = available_memory - (task_info.required_memory + VM_MEMORY_OVERHEAD);
 
+        // Favor less loaded VMs as well
+        if (leftover < best_fit_mem && vm_info.active_tasks.size() < 5) {
+            best_vm = vm;
+            best_fit_mem = leftover;
+        }
+    }
 
-   // Step 2: Create a new VM on an active machine
-   for (unsigned i = 0; i < machines.size(); i++) {
-      MachineId_t machine_id = machines[i];
-      MachineInfo_t m_info = Machine_GetInfo(machine_id);
+    if (best_vm != VMId_t(-1)) {
+        VM_AddTask(best_vm, task_id, priority);
+        task_to_vm[task_id] = best_vm;
 
-      if (m_info.s_state != S0 || m_info.cpu != task_info.required_cpu) continue;
-      unsigned available_memory = m_info.memory_size - m_info.memory_used;
-      if (available_memory < task_info.required_memory + VM_MEMORY_OVERHEAD) continue;
+        SimOutput("NewTask(): Assigned task " + to_string(task_id) +
+                  " (SLA " + to_string(task_info.required_sla) + ") to existing VM " +
+                  to_string(best_vm), 2);
+        return;
+    }
 
-      // Create VM and defer task assignment 
-      
-      VMId_t new_vm = VM_Create(task_info.required_vm, task_info.required_cpu);
-      VM_Attach(new_vm, machine_id);
-      VM_AddTask(new_vm, task_id, task_info.priority);
-      vms.push_back(new_vm);
-  
-      SimOutput("NewTask(): Created VM " + to_string(new_vm) + " on machine " + to_string(machine_id) + " — task deferred", 2);
-      return;
-   }
+    for (MachineId_t machine_id : machines) {
+        MachineInfo_t m_info = Machine_GetInfo(machine_id);
+        if (m_info.s_state != S0 || m_info.cpu != task_info.required_cpu) continue;
 
-   // Step 3: Activate a new machine and create a new VM
-   for (unsigned i = 0; i < Machine_GetTotal(); i++) {
-      MachineId_t machine = MachineId_t(i);
-      MachineInfo_t m_info = Machine_GetInfo(machine);
-      if (m_info.s_state == S5 && m_info.cpu == task_info.required_cpu) {
-         Machine_SetState(machine, S0);
-         VMId_t new_vm = VM_Create(task_info.required_vm, task_info.required_cpu);
-         SimOutput("went wrong at this attach", 3);
-         VM_Attach(new_vm, machine);
-         VM_AddTask(new_vm, task_id, task_info.priority);
+        unsigned available_memory = m_info.memory_size - m_info.memory_used;
+        if (available_memory < task_info.required_memory + VM_MEMORY_OVERHEAD) continue;
 
-         vms.push_back(new_vm);
-         machines.push_back(machine);
+        VMId_t new_vm = VM_Create(task_info.required_vm, task_info.required_cpu);
+        VM_Attach(new_vm, machine_id);
+        VM_AddTask(new_vm, task_id, priority);
 
-         SimOutput("NewTask(): Powered on sleeping machine " + to_string(machine) + " for task " + to_string(task_id), 2);
-         return;
-      }
-   }
+        vms.push_back(new_vm);
+        task_to_vm[task_id] = new_vm;
 
-   SimOutput("NewTask(): No placement found for task " + to_string(task_id), 1);
+        SimOutput("NewTask(): Created VM " + to_string(new_vm) + " on machine " +
+                  to_string(machine_id) + " for task " + to_string(task_id), 2);
+        return;
+    }
+
+    for (unsigned i = 0; i < Machine_GetTotal(); i++) {
+        MachineId_t machine = MachineId_t(i);
+        MachineInfo_t m_info = Machine_GetInfo(machine);
+        if (m_info.s_state == S5 && m_info.cpu == task_info.required_cpu) {
+            Machine_SetState(machine, S0);
+            VMId_t new_vm = VM_Create(task_info.required_vm, task_info.required_cpu);
+            VM_Attach(new_vm, machine);
+            VM_AddTask(new_vm, task_id, priority);
+
+            vms.push_back(new_vm);
+            machines.push_back(machine);
+            task_to_vm[task_id] = new_vm;
+
+            SimOutput("NewTask(): Powered on machine " + to_string(machine) + " for task " + to_string(task_id), 2);
+            return;
+        }
+    }
+
+    SimOutput("NewTask(): No placement found for task " + to_string(task_id), 1);
 }
 
 
@@ -176,7 +187,17 @@ void Scheduler::TaskComplete(Time_t now, TaskId_t task_id) {
    // Do any bookkeeping necessary for the data structures
    // Decide if a machine is to be turned off, slowed down, or VMs to be migrated according to your policy
    // This is an opportunity to make any adjustments to optimize performance/energy
-  
+
+   SimOutput("Scheduler::TaskComplete(): Task " + to_string(task_id) + " is complete at " + to_string(now), 4);
+
+    VMId_t vm = task_to_vm[task_id];
+    MachineId_t machine = vm_to_machine[vm];
+    MachineInfo_t machine_info = Machine_GetInfo(machine);
+
+    if (machine_info.active_tasks == 0 && machine_info.active_vms == 0 && machine_info.s_state == S0) {
+        VM_Shutdown(vm);
+        Machine_SetState(machine, S5);
+    }
    SimOutput("Scheduler::TaskComplete(): Task " + to_string(task_id) + " is complete at " + to_string(now), 4);
 }
 
