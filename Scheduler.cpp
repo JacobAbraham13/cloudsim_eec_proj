@@ -72,6 +72,7 @@ void Scheduler::MigrationComplete(Time_t time, VMId_t vm_id) {
 void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
    TaskInfo_t task_info = GetTaskInfo(task_id);
 
+   //used AI to fix this loop 
    for(int i = 0; i < Machine_GetTotal(); i++) {
       size_t index = (round_robin_pointer + i) % Machine_GetTotal(); //resets the index when it hits the max 
       MachineId_t machine_id = MachineId_t(index);
