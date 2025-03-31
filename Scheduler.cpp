@@ -72,6 +72,8 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
    VMId_t best_vm = -1;
    int min_tasks = UINT_MAX;
 
+
+   //Used AI to fix this loop 
    // Step 1: Check the VM's on active machines
    for (VMId_t vm : vms) {
       VMInfo_t vm_info = VM_GetInfo(vm);
@@ -96,7 +98,7 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
        return;
    }
 
-
+   // Used AI to fix this loop
    // Step 2: Create a new VM on an active machine
    for (unsigned i = 0; i < machines.size(); i++) {
       MachineId_t machine_id = machines[i];
@@ -117,6 +119,7 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
       return;
    }
 
+   // Used AI to fix this loop
    // Step 3: Activate a new machine and create a new VM
    for (unsigned i = 0; i < Machine_GetTotal(); i++) {
       MachineId_t machine = MachineId_t(i);
@@ -124,7 +127,6 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
       if (m_info.s_state == S5 && m_info.cpu == task_info.required_cpu) {
          Machine_SetState(machine, S0);
          VMId_t new_vm = VM_Create(task_info.required_vm, task_info.required_cpu);
-         SimOutput("went wrong at this attach", 3);
          VM_Attach(new_vm, machine);
          VM_AddTask(new_vm, task_id, task_info.priority);
 
