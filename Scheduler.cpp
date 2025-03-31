@@ -80,6 +80,8 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
     VMId_t best_vm = -1;
     unsigned best_fit_mem = UINT_MAX;
 
+
+    //used AI to fix this loop
     for (VMId_t vm : vms) {
         VMInfo_t vm_info = VM_GetInfo(vm);
         MachineId_t machine_id = vm_info.machine_id;
@@ -94,6 +96,7 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
         unsigned leftover = available_memory - (task_info.required_memory + VM_MEMORY_OVERHEAD);
 
         // Favor less loaded VMs as well
+        // Used AI to come up with the conditional 
         if (leftover < best_fit_mem && vm_info.active_tasks.size() < 5) {
             best_vm = vm;
             best_fit_mem = leftover;
@@ -122,6 +125,8 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
         VM_AddTask(new_vm, task_id, priority);
 
         vms.push_back(new_vm);
+
+        //needed to use AI to create this hashmap 
         task_to_vm[task_id] = new_vm;
 
         SimOutput("NewTask(): Created VM " + to_string(new_vm) + " on machine " +
@@ -140,6 +145,7 @@ void Scheduler::NewTask(Time_t now, TaskId_t task_id) {
 
             vms.push_back(new_vm);
             machines.push_back(machine);
+
             task_to_vm[task_id] = new_vm;
 
             SimOutput("NewTask(): Powered on machine " + to_string(machine) + " for task " + to_string(task_id), 2);
